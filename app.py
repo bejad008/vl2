@@ -216,8 +216,8 @@ def vqa(request: VQARequest):
 
 
 # --- Health Check Endpoint ---
-@app.function()
-@modal.fastapi_endpoint(method="GET", label="health")  # Renamed dari web_endpoint
+@app.function(image=qwen_image)  # <-- TAMBAHKAN INI
+@modal.fastapi_endpoint(method="GET", label="health")
 def health():
     """Health check endpoint"""
     return {"status": "healthy", "service": "qwen2vl-api"}
