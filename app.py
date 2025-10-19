@@ -16,7 +16,7 @@ qwen_image = (
     .pip_install(
         "torch==2.3.0",
         "torchvision",
-        "transformers==4.57.0",
+        "transformers>=4.45",
         "accelerate>=0.30",
         "pillow>=10.0",
         "fastapi",
@@ -32,7 +32,7 @@ qwen_image = (
     image=qwen_image,
     secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=600,
-    allow_concurrent_inputs=1,
+    concurrency_limit=1,
 )
 class Qwen3VLModel:
     @modal.enter()
@@ -168,9 +168,7 @@ class VQARequest(BaseModel):
 
 
 # --- Web Endpoint (FastAPI) ---
-@app.function(
-    image=qwen_image,
-)
+@app.function(image=qwen_image)
 @modal.web_endpoint(method="POST")
 async def vqa(request: VQARequest):
     """
