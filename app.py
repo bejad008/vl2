@@ -32,8 +32,9 @@ qwen_image = (
     secrets=[modal.Secret.from_name("huggingface-secret")],
     scaledown_window=300,  # Renamed from container_idle_timeout
     timeout=600,
+    max_container=10
 )
-@modal.concurrent(10)  # Decorator untuk concurrent requests (bukan parameter)
+  # Decorator untuk concurrent requests (bukan parameter)
 class Qwen2VLModel:
     def __enter__(self):
         """Initialize model saat container start"""
