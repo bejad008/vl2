@@ -32,7 +32,7 @@ qwen_image = (
     secrets=[modal.Secret.from_name("huggingface-secret")],
     scaledown_window=300,  # Renamed from container_idle_timeout
     timeout=600,
-    max_container=10
+    max_containers=10
 )
   # Decorator untuk concurrent requests (bukan parameter)
 class Qwen2VLModel:
