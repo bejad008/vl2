@@ -1,6 +1,6 @@
 # app.py
 import modal
-from modal import Image, gpu, web_endpoint
+from modal import Image
 from pydantic import BaseModel
 import io
 import base64
@@ -21,20 +21,19 @@ qwen_image = (
         "transformers>=4.40",
         "accelerate>=0.30",
         "pillow",
-        "qwen-vl-utils",
-        "fastapi"# Helper library untuk Qwen2-VL
+        "fastapi"  # Required untuk web endpoints
     )
 )
 
 # --- Model Class ---
 @app.cls(
-    gpu=gpu.T4(),
+    gpu="T4",  # Updated syntax (tidak perlu gpu.T4())
     image=qwen_image,
-    secrets=[modal.Secret.from_name("huggingface-secret")],  # Secure token management
-    container_idle_timeout=300,  # 5 menit
+    secrets=[modal.Secret.from_name("huggingface-secret")],
+    scaledown_window=300,  # Renamed from container_idle_timeout
     timeout=600,
-    allow_concurrent_inputs=10,  # Multiple requests
 )
+@modal.concurrent(10)  # Decorator untuk concurrent requests (bukan parameter)
 class Qwen2VLModel:
     def __enter__(self):
         """Initialize model saat container start"""
@@ -80,7 +79,7 @@ class Qwen2VLModel:
                     "content": [
                         {
                             "type": "image",
-                            "image": image,  # Pass PIL Image langsung
+                            "image": image,
                         },
                         {
                             "type": "text", 
@@ -154,12 +153,12 @@ class VQARequest(BaseModel):
         }
 
 
-# --- Web Endpoint ---
+# --- Web Endpoint (FastAPI) ---
 @app.function(
     image=qwen_image,
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
-@web_endpoint(method="POST", label="qwen2vl-inference")
+@modal.fastapi_endpoint(method="POST", label="qwen2vl-inference")  # Renamed dari web_endpoint
 def vqa(request: VQARequest):
     """
     Visual Question Answering endpoint
@@ -217,7 +216,7 @@ def vqa(request: VQARequest):
 
 # --- Health Check Endpoint ---
 @app.function()
-@web_endpoint(method="GET", label="health")
+@modal.fastapi_endpoint(method="GET", label="health")  # Renamed dari web_endpoint
 def health():
     """Health check endpoint"""
     return {"status": "healthy", "service": "qwen2vl-api"}
