@@ -27,31 +27,9 @@ qwen_image = (
     gpu="T4",
     image=qwen_image,
     secrets=[modal.Secret.from_name("huggingface-secret")],
-    container_idle_timeout=300,
     timeout=600,
 )
 class Qwen2VLModel:
-    @modal.build()
-    def download_model(self):
-        """Download model during build time"""
-        import os
-        from transformers import AutoModelForImageTextToText, AutoProcessor
-        
-        model_name = "Qwen/Qwen3-VL-4B-Thinking"
-        hf_token = os.environ.get("HF_TOKEN")
-        
-        print("Downloading model and processor...")
-        AutoProcessor.from_pretrained(
-            model_name,
-            token=hf_token,
-            trust_remote_code=True
-        )
-        AutoModelForImageTextToText.from_pretrained(
-            model_name,
-            token=hf_token,
-            trust_remote_code=True
-        )
-    
     @modal.enter()
     def load_model(self):
         """Initialize model when container starts"""
@@ -174,9 +152,8 @@ class VQARequest(BaseModel):
 # --- Web Endpoint (FastAPI) ---
 @app.function(
     image=qwen_image,
-    secrets=[modal.Secret.from_name("huggingface-secret")],
 )
-@modal.web_endpoint(method="POST", label="qwen2vl-inference")
+@modal.web_endpoint(method="POST")
 async def vqa(request: VQARequest):
     """
     Visual Question Answering endpoint
@@ -234,7 +211,7 @@ async def vqa(request: VQARequest):
 
 # --- Health Check Endpoint ---
 @app.function(image=qwen_image)
-@modal.web_endpoint(method="GET", label="health")
+@modal.web_endpoint(method="GET")
 async def health():
     """Health check endpoint"""
     return {"status": "healthy", "service": "qwen2vl-api"}
