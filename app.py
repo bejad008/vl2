@@ -16,12 +16,12 @@ qwen_image = (
     .pip_install(
         "torch==2.3.0",
         "torchvision",
-        "transformers>=4.40",
+        "transformers==4.57.0",
         "accelerate>=0.30",
         "pillow>=10.0",
         "fastapi",
         "pydantic",
-        "qwen-vl-utils"
+        "qwen-vl-utils>=0.0.14"
     )
     .apt_install("libssl-dev", "libffi-dev")
 )
@@ -39,7 +39,7 @@ class Qwen3VLModel:
     def load_model(self):
         """Initialize model when container starts"""
         import os
-        from transformers import AutoModelForCausalLM, AutoProcessor
+        from transformers import AutoModelForImageTextToText, AutoProcessor
         
         model_name = "Qwen/Qwen3-VL-4B-Thinking"
         hf_token = os.environ.get("HF_TOKEN")
@@ -53,13 +53,12 @@ class Qwen3VLModel:
             )
             
             print("Loading model...")
-            self.model = AutoModelForCausalLM.from_pretrained(
+            self.model = AutoModelForImageTextToText.from_pretrained(
                 model_name,
                 token=hf_token,
                 torch_dtype=torch.float16,
                 device_map="auto",
-                trust_remote_code=True,
-                attn_implementation="flash_attention_2"
+                trust_remote_code=True
             )
             self.model.eval()
             print("Model loaded successfully!")
@@ -71,6 +70,8 @@ class Qwen3VLModel:
     def generate(self, image_bytes: bytes, prompt: str, max_tokens: int = 512) -> str:
         """Generate response from image and prompt"""
         try:
+            from qwen_vl_utils import process_vision_info
+            
             # Load and validate image
             image = PILImage.open(io.BytesIO(image_bytes))
             
@@ -102,14 +103,22 @@ class Qwen3VLModel:
                 add_generation_prompt=True
             )
             
-            # Process inputs
-            image_inputs, video_inputs = self.processor.process_vision_info(messages)
+            # Process vision info using qwen-vl-utils
+            image_inputs, video_inputs, video_kwargs = process_vision_info(
+                messages,
+                image_patch_size=16,
+                return_video_kwargs=True,
+                return_video_metadata=True
+            )
+            
+            # Process inputs with do_resize=False (qwen-vl-utils already resized)
             inputs = self.processor(
                 text=[text],
                 images=image_inputs,
                 videos=video_inputs,
                 padding=True,
-                return_tensors="pt"
+                return_tensors="pt",
+                do_resize=False
             )
             
             # Move to GPU
@@ -127,7 +136,8 @@ class Qwen3VLModel:
             generated_ids = output_ids[:, inputs['input_ids'].shape[1]:]
             generated_text = self.processor.batch_decode(
                 generated_ids, 
-                skip_special_tokens=True
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False
             )[0]
             
             # Cleanup
@@ -222,4 +232,4 @@ async def vqa(request: VQARequest):
 @modal.web_endpoint(method="GET")
 async def health():
     """Health check endpoint"""
-    return {"status": "healthy", "service": "qwen3vl-api"}
+    return {"status": "healthy", "service": "qwen2vl-api"}
