@@ -21,7 +21,8 @@ qwen_image = (
         "transformers>=4.40",
         "accelerate>=0.30",
         "pillow",
-        "qwen-vl-utils"  # Helper library untuk Qwen2-VL
+        "qwen-vl-utils",
+        "fastapi"# Helper library untuk Qwen2-VL
     )
 )
 
