@@ -23,7 +23,8 @@ qwen_image = (
         "pydantic",
         "qwen-vl-utils>=0.0.14"
     )
-    .apt_install("libssl-dev", "libffi-dev")
+    # Hapus apt_install yang tidak perlu
+    # .apt_install("libssl-dev", "libffi-dev") 
 )
 
 # --- Model Class ---
@@ -32,7 +33,8 @@ qwen_image = (
     image=qwen_image,
     secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=600,
-    concurrency_limit=1,
+    # PERBAIKAN DEPRECATION: concurrency_limit -> max_containers
+    max_containers=1, 
 )
 class Qwen3VLModel:
     @modal.enter()
@@ -56,7 +58,8 @@ class Qwen3VLModel:
             self.model = AutoModelForImageTextToText.from_pretrained(
                 model_name,
                 token=hf_token,
-                torch_dtype=torch.float16,
+                # PERBAIKAN CUDA: float16 -> bfloat16 untuk kompatibilitas T4 yang lebih baik
+                torch_dtype=torch.bfloat16, 
                 device_map="auto",
                 trust_remote_code=True
             )
@@ -169,14 +172,15 @@ class VQARequest(BaseModel):
 
 # --- Web Endpoint (FastAPI) ---
 @app.function(image=qwen_image)
-@modal.web_endpoint(method="POST")
+# PERBAIKAN DEPRECATION: @modal.web_endpoint -> @modal.fastapi_endpoint
+@modal.fastapi_endpoint(method="POST") 
 async def vqa(request: VQARequest):
     """
     Visual Question Answering endpoint
     
     Example curl:
     ```bash
-    curl -X POST https://your-username--qwen2vl-api-vqa.modal.run \
+    curl -X POST [https://your-username--qwen2vl-api-vqa.modal.run](https://your-username--qwen2vl-api-vqa.modal.run) \
       -H "Content-Type: application/json" \
       -d '{
         "image_b64": "base64_encoded_image_here",
@@ -227,7 +231,8 @@ async def vqa(request: VQARequest):
 
 # --- Health Check Endpoint ---
 @app.function(image=qwen_image)
-@modal.web_endpoint(method="GET")
+# PERBAIKAN DEPRECATION: @modal.web_endpoint -> @modal.fastapi_endpoint
+@modal.fastapi_endpoint(method="GET") 
 async def health():
     """Health check endpoint"""
     return {"status": "healthy", "service": "qwen2vl-api"}
