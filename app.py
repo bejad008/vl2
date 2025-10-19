@@ -39,9 +39,11 @@ class Qwen2VLModel:
     def __enter__(self):
         """Initialize model saat container start"""
         import os
-        from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+        # <--- DIUBAH: Menggunakan AutoModelForImageTextToText sesuai Qwen3-VL
+        from transformers import AutoModelForImageTextToText, AutoProcessor
         
-        model_name = "Qwen/Qwen2-VL-7B-Instruct"
+        # <--- DIUBAH: Model diganti ke versi 4B Thinking untuk STEM
+        model_name = "Qwen/Qwen3-VL-4B-Thinking"
         hf_token = os.environ.get("HF_TOKEN")
         
         print("Loading processor...")
@@ -52,7 +54,8 @@ class Qwen2VLModel:
         )
         
         print("Loading model...")
-        self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+        # <--- DIUBAH: Menggunakan AutoModelForImageTextToText sesuai Qwen3-VL
+        self.model = AutoModelForImageTextToText.from_pretrained(
             model_name,
             token=hf_token,
             torch_dtype=torch.float16,
@@ -166,7 +169,7 @@ def vqa(request: VQARequest):
     
     Example curl:
     ```
-    curl -X POST https://your-username--qwen2vl-api-qwen2vl-inference.modal.run \
+    curl -X POST [https://your-username--qwen2vl-api-qwen2vl-inference.modal.run](https://your-username--qwen2vl-api-qwen2vl-inference.modal.run) \
       -H "Content-Type: application/json" \
       -d '{
         "image_b64": "base64_encoded_image_here",
@@ -195,8 +198,9 @@ def vqa(request: VQARequest):
             }, 400
         
         # Generate response
-        model = Qwen2VLModel()
-        result = model.generate.remote(
+        # <--- DIUBAH: Memperbaiki AttributeError
+        # Panggil method .remote() langsung pada Kelas, bukan instance baru
+        result = Qwen2VLModel().generate.remote(
             image_data, 
             request.prompt,
             request.max_tokens
