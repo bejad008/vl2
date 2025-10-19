@@ -10,9 +10,6 @@ from PIL import Image as PILImage
 # --- Modal App ---
 app = modal.App("qwen2vl-api")
 
-# --- Secrets Configuration ---
-# Tambahkan token via: modal secret create huggingface-secret HF_TOKEN=your_token_here
-
 # --- Image Environment ---
 qwen_image = (
     Image.debian_slim(python_version="3.11")
@@ -21,28 +18,46 @@ qwen_image = (
         "transformers>=4.40",
         "accelerate>=0.30",
         "pillow",
-        "fastapi"  # Required untuk web endpoints
+        "fastapi"
     )
 )
 
 # --- Model Class ---
 @app.cls(
-    gpu="T4",  # Updated syntax (tidak perlu gpu.T4())
+    gpu="T4",
     image=qwen_image,
     secrets=[modal.Secret.from_name("huggingface-secret")],
-    scaledown_window=300,  # Renamed from container_idle_timeout
+    container_idle_timeout=300,
     timeout=600,
-    max_containers=10
 )
-  # Decorator untuk concurrent requests (bukan parameter)
 class Qwen2VLModel:
-    def __enter__(self):
-        """Initialize model saat container start"""
+    @modal.build()
+    def download_model(self):
+        """Download model during build time"""
         import os
-        # <--- DIUBAH: Menggunakan AutoModelForImageTextToText sesuai Qwen3-VL
         from transformers import AutoModelForImageTextToText, AutoProcessor
         
-        # <--- DIUBAH: Model diganti ke versi 4B Thinking untuk STEM
+        model_name = "Qwen/Qwen3-VL-4B-Thinking"
+        hf_token = os.environ.get("HF_TOKEN")
+        
+        print("Downloading model and processor...")
+        AutoProcessor.from_pretrained(
+            model_name,
+            token=hf_token,
+            trust_remote_code=True
+        )
+        AutoModelForImageTextToText.from_pretrained(
+            model_name,
+            token=hf_token,
+            trust_remote_code=True
+        )
+    
+    @modal.enter()
+    def load_model(self):
+        """Initialize model when container starts"""
+        import os
+        from transformers import AutoModelForImageTextToText, AutoProcessor
+        
         model_name = "Qwen/Qwen3-VL-4B-Thinking"
         hf_token = os.environ.get("HF_TOKEN")
         
@@ -54,7 +69,6 @@ class Qwen2VLModel:
         )
         
         print("Loading model...")
-        # <--- DIUBAH: Menggunakan AutoModelForImageTextToText sesuai Qwen3-VL
         self.model = AutoModelForImageTextToText.from_pretrained(
             model_name,
             token=hf_token,
@@ -69,14 +83,14 @@ class Qwen2VLModel:
     def generate(self, image_bytes: bytes, prompt: str, max_tokens: int = 512) -> str:
         """Generate response from image and prompt"""
         try:
-            # Load dan validate image
+            # Load and validate image
             image = PILImage.open(io.BytesIO(image_bytes))
             
-            # Convert to RGB jika perlu
+            # Convert to RGB if needed
             if image.mode != "RGB":
                 image = image.convert("RGB")
             
-            # Prepare messages sesuai format Qwen2-VL
+            # Prepare messages
             messages = [
                 {
                     "role": "user",
@@ -122,7 +136,7 @@ class Qwen2VLModel:
                     eos_token_id=self.processor.tokenizer.eos_token_id,
                 )
             
-            # Decode hanya generated tokens (skip input)
+            # Decode only generated tokens
             generated_ids = output_ids[:, inputs['input_ids'].shape[1]:]
             generated_text = self.processor.batch_decode(
                 generated_ids, 
@@ -143,9 +157,9 @@ class Qwen2VLModel:
 
 # --- Request Model ---
 class VQARequest(BaseModel):
-    image_b64: str  # base64-encoded image
+    image_b64: str
     prompt: str
-    max_tokens: int = 512  # Optional parameter
+    max_tokens: int = 512
     
     class Config:
         json_schema_extra = {
@@ -162,14 +176,14 @@ class VQARequest(BaseModel):
     image=qwen_image,
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
-@modal.fastapi_endpoint(method="POST", label="qwen2vl-inference")  # Renamed dari web_endpoint
-def vqa(request: VQARequest):
+@modal.web_endpoint(method="POST", label="qwen2vl-inference")
+async def vqa(request: VQARequest):
     """
     Visual Question Answering endpoint
     
     Example curl:
-    ```
-    curl -X POST [https://your-username--qwen2vl-api-qwen2vl-inference.modal.run](https://your-username--qwen2vl-api-qwen2vl-inference.modal.run) \
+    ```bash
+    curl -X POST https://your-username--qwen2vl-api-vqa.modal.run \
       -H "Content-Type: application/json" \
       -d '{
         "image_b64": "base64_encoded_image_here",
@@ -186,21 +200,20 @@ def vqa(request: VQARequest):
             return {
                 "error": "Invalid base64 image data",
                 "details": str(e)
-            }, 400
+            }
         
-        # Validate image dapat dibuka
+        # Validate image can be opened
         try:
             PILImage.open(io.BytesIO(image_data))
         except Exception as e:
             return {
                 "error": "Invalid image format",
                 "details": str(e)
-            }, 400
+            }
         
-        # Generate response
-        # <--- DIUBAH: Memperbaiki AttributeError
-        # Panggil method .remote() langsung pada Kelas, bukan instance baru
-        result = Qwen2VLModel().generate.remote(
+        # Generate response using the model class
+        model = Qwen2VLModel()
+        result = model.generate.remote(
             image_data, 
             request.prompt,
             request.max_tokens
@@ -216,12 +229,12 @@ def vqa(request: VQARequest):
         return {
             "success": False,
             "error": str(e)
-        }, 500
+        }
 
 
 # --- Health Check Endpoint ---
-@app.function(image=qwen_image)  # <-- TAMBAHKAN INI
-@modal.fastapi_endpoint(method="GET", label="health")
-def health():
+@app.function(image=qwen_image)
+@modal.web_endpoint(method="GET", label="health")
+async def health():
     """Health check endpoint"""
     return {"status": "healthy", "service": "qwen2vl-api"}
