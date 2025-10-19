@@ -23,7 +23,6 @@ qwen_image = (
         "pydantic",
         "qwen-vl-utils>=0.0.14"
     )
-    # Hapus apt_install yang tidak perlu
     # .apt_install("libssl-dev", "libffi-dev") 
 )
 
@@ -33,7 +32,6 @@ qwen_image = (
     image=qwen_image,
     secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=600,
-    # PERBAIKAN DEPRECATION: concurrency_limit -> max_containers
     max_containers=1, 
 )
 class Qwen3VLModel:
@@ -58,8 +56,8 @@ class Qwen3VLModel:
             self.model = AutoModelForImageTextToText.from_pretrained(
                 model_name,
                 token=hf_token,
-                # PERBAIKAN CUDA: float16 -> bfloat16 untuk kompatibilitas T4 yang lebih baik
-                torch_dtype=torch.bfloat16, 
+                # PERBAIKAN: Mengganti 'torch_dtype' menjadi 'dtype'
+                dtype=torch.bfloat16, 
                 device_map="auto",
                 trust_remote_code=True
             )
@@ -172,7 +170,6 @@ class VQARequest(BaseModel):
 
 # --- Web Endpoint (FastAPI) ---
 @app.function(image=qwen_image)
-# PERBAIKAN DEPRECATION: @modal.web_endpoint -> @modal.fastapi_endpoint
 @modal.fastapi_endpoint(method="POST") 
 async def vqa(request: VQARequest):
     """
@@ -231,7 +228,6 @@ async def vqa(request: VQARequest):
 
 # --- Health Check Endpoint ---
 @app.function(image=qwen_image)
-# PERBAIKAN DEPRECATION: @modal.web_endpoint -> @modal.fastapi_endpoint
 @modal.fastapi_endpoint(method="GET") 
 async def health():
     """Health check endpoint"""
