@@ -15,11 +15,15 @@ qwen_image = (
     Image.debian_slim(python_version="3.11")
     .pip_install(
         "torch==2.3.0",
+        "torchvision",
         "transformers>=4.40",
         "accelerate>=0.30",
-        "pillow",
-        "fastapi"
+        "pillow>=10.0",
+        "fastapi",
+        "pydantic",
+        "qwen-vl-utils"
     )
+    .apt_install("libssl-dev", "libffi-dev")
 )
 
 # --- Model Class ---
@@ -28,34 +32,40 @@ qwen_image = (
     image=qwen_image,
     secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=600,
+    allow_concurrent_inputs=1,
 )
-class Qwen2VLModel:
+class Qwen3VLModel:
     @modal.enter()
     def load_model(self):
         """Initialize model when container starts"""
         import os
-        from transformers import AutoModelForImageTextToText, AutoProcessor
+        from transformers import AutoModelForCausalLM, AutoProcessor
         
         model_name = "Qwen/Qwen3-VL-4B-Thinking"
         hf_token = os.environ.get("HF_TOKEN")
         
-        print("Loading processor...")
-        self.processor = AutoProcessor.from_pretrained(
-            model_name,
-            token=hf_token,
-            trust_remote_code=True
-        )
-        
-        print("Loading model...")
-        self.model = AutoModelForImageTextToText.from_pretrained(
-            model_name,
-            token=hf_token,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            trust_remote_code=True
-        )
-        self.model.eval()
-        print("Model loaded successfully!")
+        try:
+            print("Loading processor...")
+            self.processor = AutoProcessor.from_pretrained(
+                model_name,
+                token=hf_token,
+                trust_remote_code=True
+            )
+            
+            print("Loading model...")
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                token=hf_token,
+                torch_dtype=torch.float16,
+                device_map="auto",
+                trust_remote_code=True,
+                attn_implementation="flash_attention_2"
+            )
+            self.model.eval()
+            print("Model loaded successfully!")
+        except Exception as e:
+            print(f"Error loading model: {str(e)}")
+            raise
 
     @modal.method()
     def generate(self, image_bytes: bytes, prompt: str, max_tokens: int = 512) -> str:
@@ -68,7 +78,7 @@ class Qwen2VLModel:
             if image.mode != "RGB":
                 image = image.convert("RGB")
             
-            # Prepare messages
+            # Prepare messages for Qwen3-VL
             messages = [
                 {
                     "role": "user",
@@ -86,22 +96,24 @@ class Qwen2VLModel:
             ]
             
             # Apply chat template
-            text_prompt = self.processor.apply_chat_template(
+            text = self.processor.apply_chat_template(
                 messages, 
                 tokenize=False, 
                 add_generation_prompt=True
             )
             
             # Process inputs
+            image_inputs, video_inputs = self.processor.process_vision_info(messages)
             inputs = self.processor(
-                text=[text_prompt],
-                images=[image],
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
                 padding=True,
                 return_tensors="pt"
             )
             
             # Move to GPU
-            inputs = {k: v.to("cuda") for k, v in inputs.items()}
+            inputs = {k: v.to("cuda") if hasattr(v, 'to') else v for k, v in inputs.items()}
             
             # Generate
             with torch.no_grad():
@@ -109,17 +121,13 @@ class Qwen2VLModel:
                     **inputs,
                     max_new_tokens=max_tokens,
                     do_sample=False,
-                    temperature=1.0,
-                    pad_token_id=self.processor.tokenizer.pad_token_id,
-                    eos_token_id=self.processor.tokenizer.eos_token_id,
                 )
             
             # Decode only generated tokens
             generated_ids = output_ids[:, inputs['input_ids'].shape[1]:]
             generated_text = self.processor.batch_decode(
                 generated_ids, 
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=True
+                skip_special_tokens=True
             )[0]
             
             # Cleanup
@@ -189,7 +197,7 @@ async def vqa(request: VQARequest):
             }
         
         # Generate response using the model class
-        model = Qwen2VLModel()
+        model = Qwen3VLModel()
         result = model.generate.remote(
             image_data, 
             request.prompt,
@@ -214,4 +222,4 @@ async def vqa(request: VQARequest):
 @modal.web_endpoint(method="GET")
 async def health():
     """Health check endpoint"""
-    return {"status": "healthy", "service": "qwen2vl-api"}
+    return {"status": "healthy", "service": "qwen3vl-api"}
