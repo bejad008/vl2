@@ -1,4 +1,12 @@
-# app.py
+# app.py - Qwen3-VL Modal Deployment (Compatible with Bot)
+"""
+UPDATED: Compatible dengan Smart AI Telegram Bot
+Changes:
+1. Endpoint renamed to match bot expectations
+2. Response format matches bot's OCR expectations
+3. Added backward compatibility mode
+"""
+
 import modal
 from modal import Image
 from pydantic import BaseModel
@@ -23,7 +31,6 @@ qwen_image = (
         "pydantic",
         "qwen-vl-utils>=0.0.14"
     )
-    # .apt_install("libssl-dev", "libffi-dev") 
 )
 
 # --- Model Class ---
@@ -32,7 +39,7 @@ qwen_image = (
     image=qwen_image,
     secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=600,
-    max_containers=1, 
+    max_containers=2,  # Increased for better concurrent handling
 )
 class Qwen3VLModel:
     @modal.enter()
@@ -45,30 +52,30 @@ class Qwen3VLModel:
         hf_token = os.environ.get("HF_TOKEN")
         
         try:
-            print("Loading processor...")
+            print("🔄 Loading processor...")
             self.processor = AutoProcessor.from_pretrained(
                 model_name,
                 token=hf_token,
                 trust_remote_code=True
             )
             
-            print("Loading model...")
+            print("🔄 Loading model...")
             self.model = AutoModelForImageTextToText.from_pretrained(
                 model_name,
                 token=hf_token,
-                # PERBAIKAN: Mengganti 'torch_dtype' menjadi 'dtype'
-                dtype=torch.bfloat16, 
+                dtype=torch.bfloat16,
                 device_map="auto",
                 trust_remote_code=True
             )
             self.model.eval()
-            print("Model loaded successfully!")
+            print("✅ Qwen3-VL-4B-Thinking loaded successfully!")
+            
         except Exception as e:
-            print(f"Error loading model: {str(e)}")
+            print(f"❌ Error loading model: {str(e)}")
             raise
 
     @modal.method()
-    def generate(self, image_bytes: bytes, prompt: str, max_tokens: int = 512) -> str:
+    def generate(self, image_bytes: bytes, prompt: str, max_tokens: int = 2048) -> str:
         """Generate response from image and prompt"""
         try:
             from qwen_vl_utils import process_vision_info
@@ -80,19 +87,13 @@ class Qwen3VLModel:
             if image.mode != "RGB":
                 image = image.convert("RGB")
             
-            # Prepare messages for Qwen3-VL
+            # Prepare messages
             messages = [
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "image",
-                            "image": image,
-                        },
-                        {
-                            "type": "text", 
-                            "text": prompt
-                        }
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": prompt}
                     ]
                 }
             ]
@@ -104,7 +105,7 @@ class Qwen3VLModel:
                 add_generation_prompt=True
             )
             
-            # Process vision info using qwen-vl-utils
+            # Process vision info
             image_inputs, video_inputs, video_kwargs = process_vision_info(
                 messages,
                 image_patch_size=16,
@@ -112,7 +113,7 @@ class Qwen3VLModel:
                 return_video_metadata=True
             )
             
-            # Process inputs with do_resize=False (qwen-vl-utils already resized)
+            # Process inputs
             inputs = self.processor(
                 text=[text],
                 images=image_inputs,
@@ -133,7 +134,7 @@ class Qwen3VLModel:
                     do_sample=False,
                 )
             
-            # Decode only generated tokens
+            # Decode
             generated_ids = output_ids[:, inputs['input_ids'].shape[1]:]
             generated_text = self.processor.batch_decode(
                 generated_ids, 
@@ -148,75 +149,83 @@ class Qwen3VLModel:
             return generated_text.strip()
             
         except Exception as e:
-            print(f"Error in generate: {str(e)}")
+            print(f"❌ Error in generate: {str(e)}")
             raise
 
 
 # --- Request Model ---
-class VQARequest(BaseModel):
+class VisionRequest(BaseModel):
+    """Unified request model compatible with both formats"""
     image_b64: str
     prompt: str
-    max_tokens: int = 512
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "image_b64": "iVBORw0KGgoAAAANS...",
-                "prompt": "What is in this image?",
-                "max_tokens": 512
-            }
-        }
+    max_tokens: int = 2048
 
 
-# --- Web Endpoint (FastAPI) ---
+# --- BACKWARD COMPATIBLE ENDPOINT (Old bot format) ---
 @app.function(image=qwen_image)
-@modal.fastapi_endpoint(method="POST") 
-async def vqa(request: VQARequest):
+@modal.web_endpoint(method="POST")
+async def analyze(request: dict):
     """
-    Visual Question Answering endpoint
+    BACKWARD COMPATIBLE endpoint for existing bot.
     
-    Example curl:
-    ```bash
-    curl -X POST [https://your-username--qwen2vl-api-vqa.modal.run](https://your-username--qwen2vl-api-vqa.modal.run) \
-      -H "Content-Type: application/json" \
-      -d '{
-        "image_b64": "base64_encoded_image_here",
-        "prompt": "Describe this image in detail",
-        "max_tokens": 512
-      }'
-    ```
+    Expected format:
+    {
+        "image_b64": "base64_string",
+        "prompt": "analyze this image",
+        "max_tokens": 2048
+    }
+    
+    Returns:
+    {
+        "success": true,
+        "response": "analysis text",
+        "content": "analysis text"  # for compatibility
+    }
     """
     try:
-        # Validate base64
-        try:
-            image_data = base64.b64decode(request.image_b64)
-        except Exception as e:
+        # Extract parameters
+        image_b64 = request.get("image_b64", "")
+        prompt = request.get("prompt", "Analyze this image in detail.")
+        max_tokens = request.get("max_tokens", 2048)
+        
+        # Validate
+        if not image_b64:
             return {
-                "error": "Invalid base64 image data",
-                "details": str(e)
+                "success": False,
+                "error": "image_b64 is required"
             }
         
-        # Validate image can be opened
+        # Decode base64
+        try:
+            image_data = base64.b64decode(image_b64)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Invalid base64: {str(e)}"
+            }
+        
+        # Validate image
         try:
             PILImage.open(io.BytesIO(image_data))
         except Exception as e:
             return {
-                "error": "Invalid image format",
-                "details": str(e)
+                "success": False,
+                "error": f"Invalid image format: {str(e)}"
             }
         
-        # Generate response using the model class
+        # Generate response
         model = Qwen3VLModel()
         result = model.generate.remote(
-            image_data, 
-            request.prompt,
-            request.max_tokens
+            image_data,
+            prompt,
+            max_tokens
         )
         
+        # Return in BOTH formats for compatibility
         return {
             "success": True,
-            "response": result,
-            "prompt": request.prompt
+            "response": result,     # New format
+            "content": result       # Old format (for backward compatibility)
         }
         
     except Exception as e:
@@ -226,9 +235,92 @@ async def vqa(request: VQARequest):
         }
 
 
-# --- Health Check Endpoint ---
+# --- NEW VQA ENDPOINT (Standard format) ---
 @app.function(image=qwen_image)
-@modal.fastapi_endpoint(method="GET") 
+@modal.web_endpoint(method="POST")
+async def vqa(request: VisionRequest):
+    """
+    Standard VQA endpoint with Pydantic validation.
+    
+    Example:
+    ```bash
+    curl -X POST https://your-app--qwen3vl-api-vqa.modal.run \
+      -H "Content-Type: application/json" \
+      -d '{
+        "image_b64": "base64_encoded_image",
+        "prompt": "What is in this image?",
+        "max_tokens": 2048
+      }'
+    ```
+    """
+    try:
+        # Decode and validate
+        image_data = base64.b64decode(request.image_b64)
+        PILImage.open(io.BytesIO(image_data))
+        
+        # Generate
+        model = Qwen3VLModel()
+        result = model.generate.remote(
+            image_data,
+            request.prompt,
+            request.max_tokens
+        )
+        
+        return {
+            "success": True,
+            "response": result,
+            "prompt": request.prompt,
+            "model": "Qwen3-VL-4B-Thinking"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+# --- HEALTH CHECK ---
+@app.function(image=qwen_image)
+@modal.web_endpoint(method="GET")
 async def health():
     """Health check endpoint"""
-    return {"status": "healthy", "service": "qwen2vl-api"}
+    return {
+        "status": "healthy",
+        "service": "qwen3vl-api",
+        "model": "Qwen3-VL-4B-Thinking",
+        "endpoints": {
+            "analyze": "/analyze (POST) - Backward compatible",
+            "vqa": "/vqa (POST) - Standard format",
+            "health": "/health (GET) - This endpoint"
+        }
+    }
+
+
+# --- DEPLOYMENT INFO ---
+@app.local_entrypoint()
+def info():
+    """Print deployment information"""
+    print("""
+    ╔═══════════════════════════════════════════════════════════╗
+    ║  Qwen3-VL-4B-Thinking API - Modal Deployment             ║
+    ╚═══════════════════════════════════════════════════════════╝
+    
+    🤖 Model: Qwen/Qwen3-VL-4B-Thinking
+    🎯 GPU: NVIDIA T4
+    ⚡ Max Containers: 2
+    
+    📡 Endpoints:
+    ├─ POST /analyze    - Backward compatible (old bot format)
+    ├─ POST /vqa        - Standard VQA format
+    └─ GET  /health     - Health check
+    
+    🚀 Deploy:
+       modal deploy app.py
+    
+    🔍 Test:
+       curl https://your-username--qwen3vl-api-health.modal.run
+    
+    📊 Monitor:
+       modal app logs qwen3vl-api
+    """)
